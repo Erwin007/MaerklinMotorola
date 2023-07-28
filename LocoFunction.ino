@@ -1,13 +1,12 @@
 #include <MaerklinMotorola.h>
 
-#define DecoderAdress 22
-
 // Soort decoder op 1 zetten
 #define LocDecoder 1
 #define WisselDecoder 0
 
 // input pin moet interrupt pin zijn
 #define INPUT_PIN 2
+MaerklinMotorola mm(INPUT_PIN);
 
 #define PWM_Pin 9 // Op ATmega328 
 #define Forward_Direction_PIN 11
@@ -17,12 +16,11 @@ byte Digitale_Functie_Pinnen[] = {13 , 8 , 7 , 6 , 5}; //Functie ; F0 ; F1 ; F2 
 
 bool changed;
 unsigned int Actual_Speed = 0 , Desired_Speed;
-byte DirectionValue = 1 , ActualDirectionValue = 2;
+byte DirectionValue = 1 , ActualDirectionValue = 255;
 byte MMChangeDirection , MMChangeDirectionOld = 0;
 byte i;
+byte DecoderAdress , Logging;
 
-
-MaerklinMotorola mm(INPUT_PIN);
 
 void setup() 
 {
@@ -44,6 +42,32 @@ void setup()
   TCCR1A = 0b00000001; // 8bit
   TCCR1B = 0b00000100; // x256 phase correct
 
+  do
+  {
+    Serial.print ("Geef het decoder adres: ");
+    while (Serial.available() == 0) {};
+    DecoderAdress = Serial.parseInt(SKIP_ALL, '\n');
+    if ((DecoderAdress >= 1) && (DecoderAdress <= 79)) 
+    {
+      Serial.println(DecoderAdress);
+    }
+    else Serial.println("Verkeerde invoer"); 
+  } while ((DecoderAdress <= 1) && (DecoderAdress > 79));
+
+  while (Serial.available() > 0 ) {Serial.read();}
+
+  do
+  {
+    Serial.print ("Logging nodig ? ( 1 = Ja / 2 = Nee) ");
+    while (Serial.available() == 0) {};
+    Logging = Serial.parseInt(SKIP_ALL, '\n');
+    while (Serial.available() > 0 ) {Serial.read();}
+    if (Logging == 1) Serial.println("Ja");
+    if (Logging == 2) Serial.println("Nee");
+    if ((Logging != 1) && (Logging != 2))  Serial.println("Verkeerde invoer"); 
+
+  } while ((Logging != 1) && (Logging != 2));
+
   attachInterrupt(digitalPinToInterrupt(INPUT_PIN), isr, CHANGE);
 
 }
@@ -53,23 +77,73 @@ void loop()
   mm.Parse();
   MaerklinMotorolaData* Data = mm.GetData();
 
-
   if ((Data) && (Data->IsLoc == LocDecoder) && (Data->Address == DecoderAdress) ) 
   {
 
-    Serial.print(Data->tm_package_delta); Serial.print(" ");
+/******************************************************************/
+/*                                                                */
+/* Printing rail information (can be deleted for lokdecoder only) */
+/*                                                                */
+/******************************************************************/
+    if (Logging == 1)
+    {
+      Serial.print(Data->tm_package_delta); Serial.print(" ");
+      if (Data->IsMM1)
+      {
+        Serial.print(" MM1 ");
+        if (Data->IsLoc) Serial.print(" Lokdecoder     ");
+        if (Data->IsMagnet) Serial.print(" Magneetdecoder ");
+        Serial.print(" Addr: "); Serial.print(Data->Address);
+        Serial.print("- Speed: " + String(Data->Speed) + " - Func: " + String(Data->Function));
+        Serial.print(" - ChangeDir: "); Serial.print(Data->ChangeDir);
+        Serial.print(" - Stop: "); Serial.print(Data->Stop);
+        Serial.print(" - Direction: "); Serial.print(DirectionValue);
+      }
+
+      if (Data->IsMM2)
+      {
+        Serial.print(" MM2 ");
+        if (Data->IsLoc) Serial.print(" Lokdecoder     ");
+        if (Data->IsMagnet) Serial.print(" Magneetdecoder ");
+        Serial.print(" Addr: "); Serial.print(Data->Address);
+        if (Data->IsFunctionRecord) Serial.print(" Function Record F" + String(Data->MM2FunctionIndex) + ": " + String(Data->IsMM2FunctionOn) + " - Speed: " + String(Data->Speed) + (" - Func: ") + String(Data->Function) + "               ");
+        if (Data->IsSpeedRecord) Serial.print(" Speed Record          - Speed: " + String(Data->Speed) + " - Func: " + String(Data->Function) + " - Direction: " + String(Data->MM2Direction));
+      }
+
+      Serial.print(" A: "); Serial.print((Data->BitsAG & 128) >>7);
+      Serial.print(" E: "); Serial.print((Data->BitsAG & 64) >>6);
+      Serial.print(" B: "); Serial.print((Data->BitsAG & 32) >>5);
+      Serial.print(" F: "); Serial.print((Data->BitsAG & 16) >>4);
+      Serial.print(" C: "); Serial.print((Data->BitsAG & 8) >>3);
+      Serial.print(" G: "); Serial.print((Data->BitsAG & 4) >>2);
+      Serial.print(" D: "); Serial.print((Data->BitsAG & 2) >>1);
+      Serial.print(" H: "); Serial.print(Data->BitsAG & 1);
+
+      for(int i=0;i<9;i++) 
+      {
+        Serial.print(Data->Trits[i]);
+      }
+
+//        for(int i=0;i<35;i++) 
+//        {
+//          Serial.print(Data->Timings[i]);
+//          Serial.print(" ");
+//        }
+//        Serial.println();
+
+      Serial.println();
+    }
+
+/******************************************************************/
+/*                                                                */
+/* Lok Decoder software                                           */
+/*                                                                */
+/******************************************************************/
+
     if (Data->IsMM1)
     {
       for (int i = 1 ; i <= 4 ; i++) digitalWrite(Digitale_Functie_Pinnen[i], LOW);
 
-      Serial.print(" MM1 ");
-      if (Data->IsLoc) Serial.print(" Lokdecoder     ");
-      if (Data->IsMagnet) Serial.print(" Magneetdecoder ");
-      Serial.print(" Addr: "); Serial.print(Data->Address);
-      Serial.print("- Speed: " + String(Data->Speed) + " - Func: " + String(Data->Function));
-      Serial.print(" - ChangeDir: "); Serial.print(Data->ChangeDir);
-      Serial.print(" - Stop: "); Serial.print(Data->Stop);
-      Serial.print(" - Direction: "); Serial.print(DirectionValue);
       MMChangeDirection = Data->ChangeDir;
       if (MMChangeDirectionOld != MMChangeDirection)
       {
@@ -80,13 +154,6 @@ void loop()
 
     if (Data->IsMM2)
     {
-      Serial.print(" MM2 ");
-      if (Data->IsLoc) Serial.print(" Lokdecoder     ");
-      if (Data->IsMagnet) Serial.print(" Magneetdecoder ");
-      Serial.print(" Addr: "); Serial.print(Data->Address);
-      if (Data->IsFunctionRecord) Serial.print(" Function Record F" + String(Data->MM2FunctionIndex) + ": " + String(Data->IsMM2FunctionOn) + " - Speed: " + String(Data->Speed) + (" - Func: ") + String(Data->Function) + "               ");
-      if (Data->IsSpeedRecord) Serial.print(" Speed Record          - Speed: " + String(Data->Speed) + " - Func: " + String(Data->Function) + " - Direction: " + String(Data->MM2Direction));
-
       if (Data->IsSpeedRecord)
       {
         DirectionValue = Data->MM2Direction; 
@@ -97,7 +164,6 @@ void loop()
         digitalWrite(Digitale_Functie_Pinnen[Data->MM2FunctionIndex], Data->IsMM2FunctionOn);
       } 
     }
-
 
     Desired_Speed = map(Data->Speed,0,14,0,255);
     
@@ -130,31 +196,6 @@ void loop()
 
     digitalWrite(Digitale_Functie_Pinnen[0], Data->Function);
 
-
-    Serial.print(" A: "); Serial.print((Data->BitsAG & 128) >>7);
-    Serial.print(" E: "); Serial.print((Data->BitsAG & 64) >>6);
-    Serial.print(" B: "); Serial.print((Data->BitsAG & 32) >>5);
-    Serial.print(" F: "); Serial.print((Data->BitsAG & 16) >>4);
-    Serial.print(" C: "); Serial.print((Data->BitsAG & 8) >>3);
-    Serial.print(" G: "); Serial.print((Data->BitsAG & 4) >>2);
-    Serial.print(" D: "); Serial.print((Data->BitsAG & 2) >>1);
-    Serial.print(" H: "); Serial.print(Data->BitsAG & 1);
-
-    for(int i=0;i<9;i++) 
-    {
-      Serial.print(Data->Trits[i]);
-    }
-
-//    for(int i=0;i<35;i++) 
-//    {
-//      Serial.print(Data->Timings[i]);
-//      Serial.print(" ");
-//    }
-//    Serial.println();
-
-
-
-    Serial.println();
   }
 }
 
